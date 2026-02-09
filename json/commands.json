@@ -1,0 +1,126 @@
+{
+  "leading_phrases": [
+    "please ",
+    "can you ",
+    "could you ",
+    "would you "
+  ],
+  "trailing_fillers": [
+    " now",
+    " please",
+    " for me"
+  ],
+  "commands": [
+    {
+      "prefix": "turn on ",
+      "name": "turn_on"
+    },
+    {
+      "prefix": "turn off ",
+      "name": "turn_off"
+    },
+    {
+      "prefix": "switch on ",
+      "name": "turn_on"
+    },
+    {
+      "prefix": "switch off ",
+      "name": "turn_off"
+    },
+    {
+      "prefix": "open ",
+      "name": "open"
+    },
+    {
+      "prefix": "close ",
+      "name": "close"
+    },
+    {
+      "prefix": "lock ",
+      "name": "lock"
+    },
+    {
+      "prefix": "unlock ",
+      "name": "unlock"
+    },
+    {
+      "prefix": "start ",
+      "name": "start"
+    },
+    {
+      "prefix": "stop ",
+      "name": "stop"
+    }
+  ],
+  "devices": [
+    {
+      "id": "front_door",
+      "name": "front door",
+      "aliases": [
+        "front door",
+        "main door",
+        "door"
+      ],
+      "supported_commands": [
+        "open",
+        "close",
+        "lock",
+        "unlock"
+      ]
+    },
+    {
+      "id": "garage_door",
+      "name": "garage door",
+      "aliases": [
+        "garage door",
+        "garage"
+      ],
+      "supported_commands": [
+        "open",
+        "close",
+        "stop"
+      ]
+    },
+    {
+      "id": "living_room_lights",
+      "name": "living room lights",
+      "aliases": [
+        "living room lights",
+        "lights",
+        "living lights"
+      ],
+      "supported_commands": [
+        "turn_on",
+        "turn_off"
+      ]
+    },
+    {
+      "id": "robot_vacuum",
+      "name": "robot vacuum",
+      "aliases": [
+        "robot vacuum",
+        "vacuum",
+        "cleaner"
+      ],
+      "supported_commands": [
+        "start",
+        "stop"
+      ]
+    },
+    {
+      "id": "coffee_machine",
+      "name": "coffee machine",
+      "aliases": [
+        "coffee machine",
+        "coffee maker",
+        "espresso machine"
+      ],
+      "supported_commands": [
+        "turn_on",
+        "turn_off",
+        "start",
+        "stop"
+      ]
+    }
+  ]
+}

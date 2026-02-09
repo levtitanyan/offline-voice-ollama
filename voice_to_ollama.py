@@ -23,7 +23,7 @@ import wave
 import urllib.request
 import urllib.error
 import subprocess
-from typing import List, Dict
+from typing import List, Dict, Optional, Any
 
 import sounddevice as sd
 from faster_whisper import WhisperModel
@@ -51,10 +51,292 @@ HISTORY_FILE = "chat_history.json"
 
 # Keep only the most recent turns to avoid huge prompts
 MAX_TURNS_TO_KEEP = 20  # last N user+assistant turns
+
+# Command rules config (loaded from JSON folder)
+COMMANDS_CONFIG_FILE = os.path.join("json", "commands.json")
+DEFAULT_COMMAND_CONFIG: Dict[str, Any] = {
+    "leading_phrases": ["please ", "can you ", "could you ", "would you "],
+    "trailing_fillers": [" now", " please", " for me"],
+    "commands": [
+        {"prefix": "turn on ", "name": "turn_on"},
+        {"prefix": "turn off ", "name": "turn_off"},
+        {"prefix": "switch on ", "name": "turn_on"},
+        {"prefix": "switch off ", "name": "turn_off"},
+        {"prefix": "open ", "name": "open"},
+        {"prefix": "close ", "name": "close"},
+        {"prefix": "lock ", "name": "lock"},
+        {"prefix": "unlock ", "name": "unlock"},
+        {"prefix": "start ", "name": "start"},
+        {"prefix": "stop ", "name": "stop"},
+    ],
+    "devices": [
+        {
+            "id": "front_door",
+            "name": "front door",
+            "aliases": ["front door", "main door", "door"],
+            "supported_commands": ["open", "close", "lock", "unlock"],
+        },
+        {
+            "id": "garage_door",
+            "name": "garage door",
+            "aliases": ["garage door", "garage"],
+            "supported_commands": ["open", "close", "stop"],
+        },
+        {
+            "id": "living_room_lights",
+            "name": "living room lights",
+            "aliases": ["living room lights", "lights", "living lights"],
+            "supported_commands": ["turn_on", "turn_off"],
+        },
+        {
+            "id": "robot_vacuum",
+            "name": "robot vacuum",
+            "aliases": ["robot vacuum", "vacuum", "cleaner"],
+            "supported_commands": ["start", "stop"],
+        },
+        {
+            "id": "coffee_machine",
+            "name": "coffee machine",
+            "aliases": ["coffee machine", "coffee maker", "espresso machine"],
+            "supported_commands": ["turn_on", "turn_off", "start", "stop"],
+        },
+    ],
+}
 # ----------------------------------------------
 
 
 Message = Dict[str, str]  # {"role": "system|user|assistant", "content": "..."}
+
+
+def load_command_config() -> Dict[str, Any]:
+    """Load command config from json/commands.json, fallback to defaults."""
+    try:
+        with open(COMMANDS_CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        if isinstance(config, dict):
+            return config
+    except Exception:
+        pass
+    return DEFAULT_COMMAND_CONFIG
+
+
+def _clean_target(raw_target: str) -> str:
+    """Normalize target phrase for command payloads."""
+    target = raw_target.strip(" \t\n\r.,!?").lower()
+    target = " ".join(target.split())
+    for article in ("the ", "a ", "an "):
+        if target.startswith(article):
+            target = target[len(article) :]
+            break
+    return target
+
+
+def _load_phrase_list(command_config: Dict[str, Any], key: str) -> List[str]:
+    """Return normalized phrase list from command config or defaults."""
+    fallback = DEFAULT_COMMAND_CONFIG[key]
+    values = command_config.get(key, fallback)
+    if not isinstance(values, list):
+        return fallback
+    cleaned = [v.lower() for v in values if isinstance(v, str) and v.strip()]
+    return cleaned or fallback
+
+
+def _load_patterns(command_config: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Return validated command patterns from config or defaults."""
+    patterns = command_config.get("commands", DEFAULT_COMMAND_CONFIG["commands"])
+    if not isinstance(patterns, list):
+        return DEFAULT_COMMAND_CONFIG["commands"]
+    valid_patterns: List[Dict[str, str]] = []
+    for item in patterns:
+        if not isinstance(item, dict):
+            continue
+        prefix = item.get("prefix")
+        name = item.get("name")
+        if not isinstance(prefix, str) or not isinstance(name, str):
+            continue
+        if not prefix.strip() or not name.strip():
+            continue
+        valid_patterns.append({"prefix": prefix.lower(), "name": name.strip().lower()})
+    return valid_patterns or DEFAULT_COMMAND_CONFIG["commands"]
+
+
+def _load_devices(command_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return validated device knowledge base from config or defaults."""
+    fallback = DEFAULT_COMMAND_CONFIG["devices"]
+    raw_devices = command_config.get("devices", fallback)
+    if not isinstance(raw_devices, list):
+        return fallback
+
+    devices: List[Dict[str, Any]] = []
+    for item in raw_devices:
+        if not isinstance(item, dict):
+            continue
+        device_id = item.get("id")
+        device_name = item.get("name")
+        aliases = item.get("aliases", [])
+        commands = item.get("supported_commands", [])
+        if not isinstance(device_id, str) or not device_id.strip():
+            continue
+        if not isinstance(device_name, str) or not device_name.strip():
+            continue
+        if not isinstance(aliases, list):
+            aliases = []
+        if not isinstance(commands, list):
+            commands = []
+
+        normalized_aliases = {_clean_target(device_name)}
+        for alias in aliases:
+            if not isinstance(alias, str):
+                continue
+            normalized_alias = _clean_target(alias)
+            if normalized_alias:
+                normalized_aliases.add(normalized_alias)
+
+        supported_commands = []
+        for command_name in commands:
+            if isinstance(command_name, str) and command_name.strip():
+                supported_commands.append(command_name.strip().lower())
+
+        if not supported_commands:
+            continue
+
+        devices.append(
+            {
+                "id": device_id.strip(),
+                "name": " ".join(device_name.strip().split()),
+                "aliases": sorted(normalized_aliases),
+                "supported_commands": sorted(set(supported_commands)),
+            }
+        )
+
+    return devices or fallback
+
+
+def _find_device(target: str, devices: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Find best matching device by normalized target aliases."""
+    normalized_target = _clean_target(target)
+    if not normalized_target:
+        return None
+
+    best_device: Optional[Dict[str, Any]] = None
+    best_score = -1
+
+    for device in devices:
+        for alias in device["aliases"]:
+            if normalized_target == alias:
+                score = 100 + len(alias)
+            elif alias in normalized_target:
+                score = 50 + len(alias)
+            elif normalized_target in alias:
+                score = 10 + len(normalized_target)
+            else:
+                continue
+
+            if score > best_score:
+                best_score = score
+                best_device = device
+
+    return best_device
+
+
+def extract_command_payload(user_text: str, command_config: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """Detect command intents and convert them into a simple JSON payload."""
+    text = user_text.strip()
+    if not text:
+        return None
+
+    lowered = text.lower().strip(" \t\n\r.,!?")
+
+    leading_phrases = _load_phrase_list(command_config, "leading_phrases")
+    for phrase in leading_phrases:
+        if lowered.startswith(phrase):
+            lowered = lowered[len(phrase) :].strip()
+            break
+
+    trailing_fillers = _load_phrase_list(command_config, "trailing_fillers")
+    changed = True
+    while changed:
+        changed = False
+        for suffix in trailing_fillers:
+            if lowered.endswith(suffix):
+                lowered = lowered[: -len(suffix)].strip()
+                changed = True
+
+    if not lowered:
+        return None
+
+    detected_command: Optional[str] = None
+    detected_target: Optional[str] = None
+
+    for rule in _load_patterns(command_config):
+        prefix = rule["prefix"]
+        command_name = rule["name"]
+        if lowered.startswith(prefix):
+            raw_target = lowered[len(prefix) :].strip(" \t\n\r.,!?")
+            target = _clean_target(raw_target)
+            if target:
+                detected_command = command_name
+                detected_target = target
+                break
+
+    # Support natural phrasing like "turn lights off" / "turn the lights on".
+    if detected_command is None and lowered.startswith("turn "):
+        if lowered.endswith(" off"):
+            raw_target = lowered[len("turn ") : -len(" off")].strip(" \t\n\r.,!?")
+            target = _clean_target(raw_target)
+            if target:
+                detected_command = "turn_off"
+                detected_target = target
+        elif lowered.endswith(" on"):
+            raw_target = lowered[len("turn ") : -len(" on")].strip(" \t\n\r.,!?")
+            target = _clean_target(raw_target)
+            if target:
+                detected_command = "turn_on"
+                detected_target = target
+
+    # Support natural phrasing like "switch lights off" / "switch lights on".
+    if detected_command is None and lowered.startswith("switch "):
+        if lowered.endswith(" off"):
+            raw_target = lowered[len("switch ") : -len(" off")].strip(" \t\n\r.,!?")
+            target = _clean_target(raw_target)
+            if target:
+                detected_command = "turn_off"
+                detected_target = target
+        elif lowered.endswith(" on"):
+            raw_target = lowered[len("switch ") : -len(" on")].strip(" \t\n\r.,!?")
+            target = _clean_target(raw_target)
+            if target:
+                detected_command = "turn_on"
+                detected_target = target
+
+    if detected_command is None or detected_target is None:
+        return None
+
+    devices = _load_devices(command_config)
+    matched_device = _find_device(detected_target, devices)
+    device_name = matched_device["name"] if matched_device is not None else detected_target
+
+    return {"device": device_name, "command": detected_command}
+
+
+def maybe_handle_command(
+    history: List[Message], user_text: str, command_config: Dict[str, Any]
+) -> Optional[List[Message]]:
+    """Handle command-style input and return updated history when matched."""
+    payload = extract_command_payload(user_text, command_config)
+    if payload is None:
+        return None
+
+    reply = json.dumps(payload, ensure_ascii=False)
+
+    history.append({"role": "user", "content": user_text})
+    history = trim_history(history)
+    history.append({"role": "assistant", "content": reply})
+    history = trim_history(history)
+    save_history(history)
+
+    print(f"\n{reply}\n")
+    return history
 
 
 def load_history() -> List[Message]:
@@ -152,8 +434,12 @@ def speak_macos(text: str) -> None:
         pass
 
 
-def chat_turn(history: List[Message], user_text: str) -> List[Message]:
+def chat_turn(history: List[Message], user_text: str, command_config: Dict[str, Any]) -> List[Message]:
     """Run one chat turn: add user message, get assistant reply, save/trim history."""
+    command_history = maybe_handle_command(history, user_text, command_config)
+    if command_history is not None:
+        return command_history
+
     history.append({"role": "user", "content": user_text})
     history = trim_history(history)
 
@@ -180,6 +466,7 @@ def main() -> None:
 
     history = load_history()
     history = ensure_system(history, SYSTEM_PROMPT)
+    command_config = load_command_config()
 
     # If you want the default system prompt to overwrite old ones each run, uncomment:
     # history[0]["content"] = SYSTEM_PROMPT
@@ -233,7 +520,7 @@ def main() -> None:
         if cmd.lower() == "t":
             user_text = input("Your Input: ").strip()
             if user_text:
-                history = chat_turn(history, user_text)
+                history = chat_turn(history, user_text, command_config)
             continue
 
         # --------- voice mode ----------
@@ -249,7 +536,7 @@ def main() -> None:
             continue
 
         print(f"\n User: {user_text}")
-        history = chat_turn(history, user_text)
+        history = chat_turn(history, user_text, command_config)
 
 
 if __name__ == "__main__":
