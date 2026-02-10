@@ -43,7 +43,7 @@ brew install ffmpeg portaudio
 
 ## Setup
 ```bash
-git clone <your-repo-url>
+git clone <https://github.com/levtitanyan/offline-voice-ollama>
 cd offline-voice-ollama
 python3 -m venv .venv
 source .venv/bin/activate
@@ -71,16 +71,6 @@ Direct script run (also supported):
 python app/voice_to_ollama.py
 ```
 
-## Testing
-Run NLP extraction tests (with mocked Ollama responses):
-```bash
-python -m unittest discover -s tests -v
-```
-
-Print test transcripts (debug):
-```bash
-PRINT_TRANSCRIPTS=1 python -m unittest discover -s tests -v
-```
 
 ## Example Command Output
 If you type a device-control request, the assistant prints JSON instead of a normal chat answer, for example:
@@ -91,7 +81,7 @@ If you type a device-control request, the assistant prints JSON instead of a nor
 ## Runtime Controls
 - `r`: record voice input
 - `t`: text input
-- `q`: quit
+- `q`: quit (clears the conversation)
 - `/clear`: clear conversation, keep current system prompt
 - `/reset`: reset system prompt and clear conversation
 - `/system <text>`: replace system instructions
