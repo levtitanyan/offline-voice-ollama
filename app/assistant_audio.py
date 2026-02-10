@@ -11,7 +11,7 @@ from .assistant_config import RECORD_SECONDS, SAMPLE_RATE, SPEAK_BACK
 
 def record_wav(path: str, seconds: int = RECORD_SECONDS, sample_rate: int = SAMPLE_RATE) -> None:
     """Record microphone input to a WAV file."""
-    print(f"🎙️ Recording for {seconds} seconds... Speak now.")
+    print(f"Recording for {seconds} seconds... Speak now.")
     audio = sd.rec(int(seconds * sample_rate), samplerate=sample_rate, channels=1, dtype="int16")
     sd.wait()
     print("✅ Recording finished.")

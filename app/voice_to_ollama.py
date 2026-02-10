@@ -58,7 +58,7 @@ def chat_turn(history: List[Message], user_text: str, command_config: dict) -> L
     history = trim_history(history)
     save_history(history)
 
-    print(f"\nAI {answer}\n")
+    print(f"\nAI: {answer}\n")
     speak_macos(answer)
     return history
 
