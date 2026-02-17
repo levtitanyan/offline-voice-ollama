@@ -43,6 +43,9 @@ else:
     from app.assistant_ollama import ask_ollama_chat
 
 
+COMMAND_PROMPT = "Commands: r=record | t=text | q=quit: "
+
+
 def chat_turn(history: List[Message], user_text: str, command_config: dict) -> List[Message]:
     """Process one user turn and update history."""
     command_history = maybe_handle_command(history, user_text, command_config)
@@ -80,9 +83,14 @@ def main() -> None:
     save_history(history)
 
     while True:
-        cmd = input(" Commands: r=record | t=text | q=quit: ").strip()
+        raw_cmd = input(COMMAND_PROMPT).strip()
+        cmd = raw_cmd.lower()
 
-        if cmd.lower() == "q":
+        if not cmd:
+            print("Please choose r, t, q, or a slash command.\n")
+            continue
+
+        if cmd == "q":
             history = ensure_system(history, SYSTEM_PROMPT)
             history = [history[0]]
             save_history(history)
@@ -103,7 +111,7 @@ def main() -> None:
             continue
 
         if cmd.startswith("/system "):
-            new_sys = cmd[len("/system ") :].strip()
+            new_sys = raw_cmd.split(" ", 1)[1].strip()
             if new_sys:
                 history = [{"role": "system", "content": new_sys}] + [
                     m for m in history if m["role"] != "system"
@@ -114,7 +122,7 @@ def main() -> None:
             continue
 
         if cmd.startswith("/addsystem "):
-            extra = cmd[len("/addsystem ") :].strip()
+            extra = raw_cmd.split(" ", 1)[1].strip()
             if extra:
                 history = ensure_system(history, SYSTEM_PROMPT)
                 history[0]["content"] = history[0]["content"].rstrip() + "\n" + extra
@@ -123,13 +131,15 @@ def main() -> None:
                 print("System instructions appended.\n")
             continue
 
-        if cmd.lower() == "t":
+        if cmd == "t":
             user_text = input("Your Input: ").strip()
             if user_text:
                 history = chat_turn(history, user_text, command_config)
             continue
 
-        if cmd.lower() != "r":
+        if cmd != "r":
+            if cmd:
+                print("Unknown command. Use r, t, q, /reset, /clear, /system, or /addsystem.\n")
             continue
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
@@ -140,10 +150,9 @@ def main() -> None:
             print("I didn't catch that. Try again.\n")
             continue
 
-        print(f"\n User: {user_text}")
+        print(f"\nUser: {user_text}")
         history = chat_turn(history, user_text, command_config)
 
 
 if __name__ == "__main__":
     main()
-
